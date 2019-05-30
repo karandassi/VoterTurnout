@@ -1,0 +1,687 @@
+---
+title: "Optimus_Project"
+author: "Karan Dassi"
+date: "4/19/2019"
+output:
+  word_document:
+   toc: true
+   toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
+```
+
+## Loading Libraries and Dataset:  
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(corrplot))
+suppressPackageStartupMessages(library(Hmisc))
+suppressPackageStartupMessages(library(ROCR))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(GGally))
+suppressPackageStartupMessages(library(lmtest))
+suppressPackageStartupMessages(library(car))
+suppressPackageStartupMessages(library(perturb))
+
+voter <- read.csv("..\\Data\\voterfile.csv")
+str(voter)
+head(voter)
+```
+
+## Data Transformation into useable format!  
+```{r}
+
+#Transforming some variables to factors which were not by default.  
+
+voter %>%
+  mutate(vh14p = as.factor(vh14p)) %>%
+   mutate(vh12p = as.factor(vh12p)) %>%
+   mutate(vh10p = as.factor(vh10p)) %>%
+   mutate(vh08p = as.factor(vh08p)) %>%
+   mutate(vh06p = as.factor(vh06p)) %>%
+   mutate(vh04p = as.factor(vh04p)) %>%
+   mutate(vh02p = as.factor(vh02p)) %>%
+   mutate(vh00p = as.factor(vh00p)) %>%
+   mutate(vh12g = as.factor(vh12g)) %>%
+   mutate(vh10g = as.factor(vh10g)) %>%
+   mutate(vh08g = as.factor(vh08g)) %>%
+   mutate(vh06g = as.factor(vh06g)) %>%
+   mutate(vh04g = as.factor(vh04g)) %>%
+   mutate(vh02g = as.factor(vh02g)) %>%
+   mutate(vh00g = as.factor(vh00g))  ->
+  voter
+
+#Removing vh14p, optimus ID and g12_precint_turnout because of logic as to test our model we are using only data till 2012.
+
+voter %>%
+   select(-vh14p, -optimus_id, -g12_precinct_turnout) ->
+   voter.rm
+str(voter.rm)
+
+
+```
+
+## Applying logistic model to the whole dataset and I am trying to test a logistic model here for vh12g and then after cross validations will go ahead to find values for vh14g:  
+```{r}
+
+#Frequency of 0's and 1's in vh12g (voter history for 2012 general election)
+voter.rm %>%
+  group_by(vh12g) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n))
+#We can easily see that there are a lot of 0's (No's) i.e. not a lot of people came out to vote
+
+voter_logit <- glm(vh12g ~ ., data=voter.rm, family=binomial(link="logit"), na.action = na.exclude)
+
+summary(voter_logit)
+
+```
+**The AIC here is 25414 and there are also a lot non significant values**  
+
+## Predictions and Confusion matrix Cross Validation for original dataset:  
+```{r}
+
+attach(voter.rm) 
+set.seed(1)
+train <- sample(1:nrow(voter.rm), 0.7*nrow(voter.rm))
+test <- seq(1:nrow(voter.rm))[-train]
+
+voter.logit.train <- glm(vh12g ~ ., family=binomial(link="logit"), data=voter.rm[train,])
+
+# Predicted values using the fitted train model and the test data for vh12g
+
+voter.logit.test=predict(voter.logit.train, voter.rm, type="response")[test]
+
+voter.logit.test[1:10]
+
+#Convert proportions to actual 0's or 1's
+
+voter.pred.test = ifelse(voter.logit.test>0.5, 1,0)
+voter.pred.test[1:10] # List first 10
+
+# Cross tabulate Prediction with Actual
+
+conf.mat <- table("Predicted"=voter.pred.test, "Actual"=vh12g[test]) 
+
+colnames(conf.mat) <- c("No", "Yes")
+rownames(conf.mat) <- c("No", "Yes")
+
+#Final Confusion Matrix
+conf.mat
+
+#We can see that our model does a very good job at predicting Yes's and No's
+
+# Computing Fit Statistics
+
+TruN <- conf.mat[1,1] # True negatives
+TruP <- conf.mat[2,2] # True positives
+FalN <- conf.mat[1,2] # False negatives
+FalP <- conf.mat[2,1] # False positives
+TotN <- conf.mat[1,1] + conf.mat[2,1] # Total negatives
+TotP <- conf.mat[1,2] + conf.mat[2,2] # Total positives
+Tot <- TotN+TotP # Total
+
+# Now let's use these to compute accuracy and error rates
+
+Accuracy.Rate <- (TruN + TruP) / Tot
+
+#It is quite clear that our accuracy overall is pretty good.
+Accuracy.Rate 
+
+
+Error.Rate <- (FalN + FalP) / Tot
+#The overall error rate is quite bad
+Error.Rate
+
+# Sensitivity -- rate of correct positives
+
+Sensitivity <- TruP / TotP 
+Sensitivity 
+
+#Prediction for true positives is quite bad
+
+# Specificity -- rate of correct negatives
+
+Specificity <- TruN / TotN 
+Specificity
+
+#Predicting true negatives is really good with this model.
+
+# False Positive Rate 
+FalseP.Rate <- 1 - Specificity
+FalseP.Rate
+
+logit.rates.50 <- c(Accuracy.Rate, Error.Rate, Sensitivity, Specificity, FalseP.Rate)
+
+names(logit.rates.50) <- c("Accuracy Rate", "Error Rate", "Sensitivity", "Specificity", "False Positives")
+
+print(logit.rates.50, digits=2)
+
+```
+
+**From the cross validation, we can easily see that this model does a pretty good job at predicting both True Negatives and True Positives and has a very good accuracy rate!**  
+**Also, I believe we should not change lambda values (threshold) because 0.5 threshold is very logical and gives us a good model for prediction, though we could reduce the threshold values from a 0.50 to a 0.40, let us test that out as well.**  
+
+## Let's go ahead and use ROC Curve to check the accuracy of our test:    
+```{r}
+
+pred <- prediction(voter.logit.test, vh12g[test]) 
+
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=T)
+
+auc <- performance(pred,"auc")
+
+c(auc@y.name[[1]], auc@y.values[[1]])
+
+
+```
+
+**The result from ROC is pretty good with area under curve being closer to 0.95 which is considered very good!**  
+
+## Confusion matrix with threshold = 0.40.  
+```{r}
+
+voter.pred.test = ifelse(voter.logit.test>0.40, 1,0)
+voter.pred.test[1:10] # List first 10
+
+# Cross tabulate Prediction with Actual
+
+conf.mat <- table("Predicted"=voter.pred.test, "Actual"=vh12g[test]) 
+
+colnames(conf.mat) <- c("No", "Yes")
+rownames(conf.mat) <- c("No", "Yes")
+
+#Final Confusion Matrix
+conf.mat
+
+# Computing Fit Statistics
+
+TruN <- conf.mat[1,1] # True negatives
+TruP <- conf.mat[2,2] # True positives
+FalN <- conf.mat[1,2] # False negatives
+FalP <- conf.mat[2,1] # False positives
+TotN <- conf.mat[1,1] + conf.mat[2,1] # Total negatives
+TotP <- conf.mat[1,2] + conf.mat[2,2] # Total positives
+Tot <- TotN+TotP # Total
+
+# Now let's use these to compute accuracy and error rates
+
+Accuracy.Rate <- (TruN + TruP) / Tot
+
+#It is quite clear that our accuracy overall is pretty good.
+Accuracy.Rate 
+
+
+Error.Rate <- (FalN + FalP) / Tot
+#The overall error rate is quite bad
+Error.Rate
+
+# Sensitivity -- rate of correct positives
+
+Sensitivity <- TruP / TotP 
+Sensitivity 
+
+#Prediction for true positives is quite bad
+
+# Specificity -- rate of correct negatives
+
+Specificity <- TruN / TotN 
+Specificity
+
+#Predicting true negatives is really good with this model.
+
+# False Positive Rate 
+FalseP.Rate <- 1 - Specificity
+FalseP.Rate
+
+logit.rates.40 <- c(Accuracy.Rate, Error.Rate, Sensitivity, Specificity, FalseP.Rate)
+
+names(logit.rates.40) <- c("Accuracy Rate", "Error Rate", "Sensitivity", "Specificity", "False Positives")
+
+print(logit.rates.40, digits=2)
+
+
+logit.fit.stats.compare <- rbind(logit.rates.50, logit.rates.40)
+print(logit.fit.stats.compare, digits=2)
+
+```
+**And to my surprise, it actually gives a better prediction than what we got at threshold = 0.5, this one seems to be much more balanced by improving a lot on sensitivity but reducing specificity a bit and accuracy is still better.**    
+
+
+
+## Looking at the summary of Logit, let us try to remove some variables with a lot of nan values and not significant:  
+```{r}
+#Marital Status
+voter.rm %>%
+   filter(maritalstatus == "nan") %>%
+   count()
+
+#Marital status has a lot of nan values over 60 percent and the nan in marital status is quite significant leading to a biased (wrong) model, lets remove this!
+
+voter.rm %>%
+   select(-maritalstatus) ->
+   voter.clean.var
+
+#Dwelling Type
+voter.clean.var %>%
+   filter(dwellingtype == "nan") %>%
+   count()
+#Dwelling type has a lot of nan values about 50 percent and is not that significant, lets remove this!
+
+voter.clean.var %>%
+   select(-dwellingtype) ->
+   voter.clean.var
+
+#education
+voter.clean.var %>%
+   filter(education == "nan") %>%
+   count()
+#Education has a lot of nan values about 50 percent and is not that significant, lets remove this!
+
+voter.clean.var %>%
+   select(-education) ->
+   voter.clean.var
+
+#Occupation Industry
+voter.clean.var %>%
+   filter(occupationindustry == "nan") %>%
+   count()
+#OccupationIndustry has a lot of nan values about 85 percent and is not that significant, lets remove this!
+
+voter.clean.var %>%
+   select(-occupationindustry) ->
+   voter.clean.var
+
+#Replacing all nan for the following variables to No as it seems the most logical way to me.
+voter.clean.var %>%
+   mutate(petowner_dog = str_replace_all(petowner_dog, "nan", "No")) %>%
+   mutate(petowner_dog = as.factor(petowner_dog)) %>%
+   mutate(intrst_nascar_in_hh = str_replace_all(intrst_nascar_in_hh, "nan", "No")) %>%
+   mutate(intrst_nascar_in_hh = as.factor(intrst_nascar_in_hh)) %>%
+   mutate(intrst_musical_instruments_in_hh = str_replace_all(intrst_musical_instruments_in_hh, "nan", "No")) %>%
+   mutate(intrst_musical_instruments_in_hh = as.factor(intrst_musical_instruments_in_hh)) %>%
+   mutate(donates_to_liberal_causes = str_replace_all(donates_to_liberal_causes, "nan", "No")) %>%
+   mutate(donates_to_liberal_causes = as.factor(donates_to_liberal_causes)) %>%
+   mutate(donates_to_conservative_causes  = str_replace_all(donates_to_conservative_causes, "nan", "No")) %>%
+   mutate(donates_to_conservative_causes = as.factor(donates_to_conservative_causes))->
+   voter.clean.var
+
+str(voter.clean.var)
+```
+
+## Applying logistic model to the reduced dataset:
+```{r}
+
+voter_logit <- glm(vh12g ~ ., data=voter.clean.var, family=binomial(link="logit"), na.action = na.exclude)
+
+summary(voter_logit)
+
+```
+**The AIC has decreased to 25408 from 25414 but it is still not a very bad result.**
+
+## Let us go ahead and make predictions and cross validate for our reduced model:  
+```{r}
+
+attach(voter.clean.var) 
+set.seed(1)
+train <- sample(1:nrow(voter.clean.var), 0.7*nrow(voter.clean.var))
+test <- seq(1:nrow(voter.clean.var))[-train]
+
+voter.logit.train.red <- glm(vh12g ~ ., family=binomial(link="logit"), data=voter.clean.var[train,])
+
+voter.logit.test.red=predict(voter.logit.train.red, voter.clean.var, type="response")[test]
+
+voter.logit.test.red[1:10]
+
+voter.pred.test.red = ifelse(voter.logit.test.red>0.5, 1,0)
+voter.pred.test.red[1:10] # List first 10
+
+conf.mat <- table("Predicted"=voter.pred.test.red, "Actual"=vh12g[test]) 
+
+colnames(conf.mat) <- c("No", "Yes")
+rownames(conf.mat) <- c("No", "Yes")
+
+#Final Confusion Matrix
+conf.mat
+
+TruN <- conf.mat[1,1] # True negatives
+TruP <- conf.mat[2,2] # True positives
+FalN <- conf.mat[1,2] # False negatives
+FalP <- conf.mat[2,1] # False positives
+TotN <- conf.mat[1,1] + conf.mat[2,1] # Total negatives
+TotP <- conf.mat[1,2] + conf.mat[2,2] # Total positives
+Tot <- TotN+TotP # Total
+
+Accuracy.Rate <- (TruN + TruP) / Tot
+
+Accuracy.Rate 
+
+Error.Rate <- (FalN + FalP) / Tot
+Error.Rate
+
+Sensitivity <- TruP / TotP 
+Sensitivity 
+
+Specificity <- TruN / TotN 
+Specificity
+FalseP.Rate <- 1 - Specificity
+FalseP.Rate
+
+logit.rates.50.red <- c(Accuracy.Rate, Error.Rate, Sensitivity, Specificity, FalseP.Rate)
+
+names(logit.rates.50.red) <- c("Accuracy Rate", "Error Rate", "Sensitivity", "Specificity", "False Positives")
+
+print(logit.rates.50.red, digits=2)
+
+logit.fit.stats.compare <- rbind(logit.rates.50, logit.rates.40)
+print(logit.fit.stats.compare, digits=2)
+
+logit.fit.stats.compare.red <- rbind(logit.fit.stats.compare, logit.rates.50.red)
+print(logit.fit.stats.compare.red, digits=3)
+
+```
+**As we can see that our reduced model is even giving us round about the same output even after removing most insignificant variables and the ones with a lots of nas. Thus, this should not cause any problems.**  
+
+## Let's go ahead and use ROC Curve to check the accuracy of our reduced test:    
+```{r}
+
+pred <- prediction(voter.logit.test.red, vh12g[test]) 
+
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=T)
+
+auc <- performance(pred,"auc")
+
+c(auc@y.name[[1]], auc@y.values[[1]])
+
+
+```
+
+**The result from ROC is pretty much the same and still pretty good!**  
+
+## Confusion matrix with threshold = 0.40 for our reduced model.  
+```{r}
+
+attach(voter.clean.var) 
+set.seed(1)
+
+train <- sample(1:nrow(voter.clean.var), 0.7*nrow(voter.clean.var))
+test <- seq(1:nrow(voter.clean.var))[-train]
+
+voter.logit.train.red <- glm(vh12g ~ ., family=binomial(link="logit"), data=voter.clean.var[train,])
+
+voter.logit.test.red=predict(voter.logit.train.red, voter.clean.var, type="response")[test]
+
+voter.logit.test.red[1:10]
+
+voter.pred.test.red = ifelse(voter.logit.test.red>0.40, 1,0)
+voter.pred.test.red[1:10] # List first 10
+
+
+conf.mat <- table("Predicted"=voter.pred.test.red, "Actual"=vh12g[test]) 
+
+colnames(conf.mat) <- c("No", "Yes")
+rownames(conf.mat) <- c("No", "Yes")
+
+conf.mat
+
+TruN <- conf.mat[1,1] # True negatives
+TruP <- conf.mat[2,2] # True positives
+FalN <- conf.mat[1,2] # False negatives
+FalP <- conf.mat[2,1] # False positives
+TotN <- conf.mat[1,1] + conf.mat[2,1] # Total negatives
+TotP <- conf.mat[1,2] + conf.mat[2,2] # Total positives
+Tot <- TotN+TotP # Total
+
+Accuracy.Rate <- (TruN + TruP) / Tot
+Accuracy.Rate 
+
+
+Error.Rate <- (FalN + FalP) / Tot
+Error.Rate
+
+Sensitivity <- TruP / TotP 
+Sensitivity 
+
+
+Specificity <- TruN / TotN 
+Specificity
+
+FalseP.Rate <- 1 - Specificity
+FalseP.Rate
+
+logit.rates.40.red <- c(Accuracy.Rate, Error.Rate, Sensitivity, Specificity, FalseP.Rate)
+
+names(logit.rates.40.red) <- c("Accuracy Rate", "Error Rate", "Sensitivity", "Specificity", "False Positives")
+
+print(logit.rates.40.red, digits=2)
+
+
+logit.fit.stats.compare.red1 <- rbind(logit.fit.stats.compare.red, logit.rates.40.red)
+print(logit.fit.stats.compare.red1, digits=3)
+
+```
+**We can see that all the models perform well and are balanced and we can easily go ahead with our reduced model.**
+
+## Let's go ahead and now try to apply variable selection method and I am choosing Stepwise:  
+```{r}
+
+
+voter.logit.cor.null <- glm(vh12g ~ 1, data=voter.clean.var, family=binomial(link="logit"))
+
+summary(voter.logit.cor.null)
+
+voter.logit.cor.full <- glm(vh12g ~ ., data=voter.clean.var, family=binomial(link="logit"))
+
+summary(voter.logit.cor.full)
+
+
+voter.step.backward <- step(voter.logit.cor.full, scope=list(lower=voter.logit.cor.null, upper=voter.logit.cor.full), direction="both", test="F")
+
+summary(voter.step.backward)
+
+```
+
+**The AIC has been reduced to 25393 and now we can go ahead and remove some insignificant variables and rebuild our model.**  
+## Removing insignificant variables found from stepwise:  
+```{r}
+
+voter.clean.var %>%
+   select(-vh02g, -vh00p, -intrst_nascar_in_hh, -donates_to_conservative_causes, -donates_to_liberal_causes, -home_owner_or_renter, -g10_precinct_turnout, -p08_precinct_turnout, -p10_precinct_turnout) ->
+   voter.clean.var.step
+
+str(voter.clean.var.step)
+
+```
+
+## Applying logistic model to the reduced dataset from Stepwise and alread removed variables:  
+```{r}
+
+voter.logit.step <- glm(vh12g ~ ., data=voter.clean.var.step, family=binomial(link="logit"))
+
+summary(voter.logit.step)
+
+```
+**The AIC has decreased to 25393.**  
+
+## Let us go ahead and make predictions and cross validate for our reduced model from Stepwise:  
+```{r}
+
+attach(voter.clean.var.step) 
+set.seed(1)
+train <- sample(1:nrow(voter.clean.var.step), 0.7*nrow(voter.clean.var.step))
+test <- seq(1:nrow(voter.clean.var.step))[-train]
+
+voter.logit.train.red.step <- glm(vh12g ~ ., family=binomial(link="logit"), data=voter.clean.var.step[train,])
+
+voter.logit.test.red.step=predict(voter.logit.train.red.step, voter.clean.var.step, type="response")[test]
+
+voter.logit.test.red.step[1:10]
+
+voter.pred.test.red.step = ifelse(voter.logit.test.red.step>0.5, 1,0)
+voter.pred.test.red.step[1:10] # List first 10
+
+conf.mat <- table("Predicted"=voter.pred.test.red.step, "Actual"=vh12g[test]) 
+
+colnames(conf.mat) <- c("No", "Yes")
+rownames(conf.mat) <- c("No", "Yes")
+
+conf.mat
+
+TruN <- conf.mat[1,1] # True negatives
+TruP <- conf.mat[2,2] # True positives
+FalN <- conf.mat[1,2] # False negatives
+FalP <- conf.mat[2,1] # False positives
+TotN <- conf.mat[1,1] + conf.mat[2,1] # Total negatives
+TotP <- conf.mat[1,2] + conf.mat[2,2] # Total positives
+Tot <- TotN+TotP # Total
+
+Accuracy.Rate <- (TruN + TruP) / Tot
+
+Accuracy.Rate 
+
+
+Error.Rate <- (FalN + FalP) / Tot
+Error.Rate
+
+Sensitivity <- TruP / TotP 
+Sensitivity 
+Specificity <- TruN / TotN 
+Specificity
+
+FalseP.Rate <- 1 - Specificity
+FalseP.Rate
+
+logit.rates.50.red.step <- c(Accuracy.Rate, Error.Rate, Sensitivity, Specificity, FalseP.Rate)
+
+names(logit.rates.50.red.step) <- c("Accuracy Rate", "Error Rate", "Sensitivity", "Specificity", "False Positives")
+
+print(logit.rates.50.red.step, digits=2)
+
+logit.fit.stats.compare.step <- rbind(logit.fit.stats.compare.red1, logit.rates.50.red.step)
+print(logit.fit.stats.compare.step, digits=2)
+
+```
+**As we can see here the reduced stepwise model does even perform somewhat the same as our previous models but helps reduce insignificant variables.**  
+
+**The result from ROC is pretty much the same and still pretty good!**  
+
+## Confusion matrix with threshold = 0.40.  
+```{r}
+
+voter.pred.test.red.step = ifelse(voter.logit.test.red.step>0.40, 1,0)
+voter.pred.test.red.step[1:10] 
+
+conf.mat <- table("Predicted"=voter.pred.test.red.step, "Actual"=vh12g[test]) 
+
+colnames(conf.mat) <- c("No", "Yes")
+rownames(conf.mat) <- c("No", "Yes")
+
+conf.mat
+
+TruN <- conf.mat[1,1] # True negatives
+TruP <- conf.mat[2,2] # True positives
+FalN <- conf.mat[1,2] # False negatives
+FalP <- conf.mat[2,1] # False positives
+TotN <- conf.mat[1,1] + conf.mat[2,1] # Total negatives
+TotP <- conf.mat[1,2] + conf.mat[2,2] # Total positives
+Tot <- TotN+TotP # Total
+
+Accuracy.Rate <- (TruN + TruP) / Tot
+Accuracy.Rate 
+
+
+Error.Rate <- (FalN + FalP) / Tot
+Error.Rate
+
+Sensitivity <- TruP / TotP 
+Sensitivity 
+
+Specificity <- TruN / TotN 
+Specificity
+
+FalseP.Rate <- 1 - Specificity
+FalseP.Rate
+
+logit.rates.40.red.step <- c(Accuracy.Rate, Error.Rate, Sensitivity, Specificity, FalseP.Rate)
+
+names(logit.rates.40.red.step) <- c("Accuracy Rate", "Error Rate", "Sensitivity", "Specificity", "False Positives")
+
+logit.fit.stats.compare.step1 <- rbind(logit.fit.stats.compare.step, logit.rates.40.red.step)
+print(logit.fit.stats.compare.step1, digits=3)
+
+```
+**There is not much of  a difference and now let us predict the voter values for 2014 general election**  
+
+## Check for multicollinearity:  
+```{r}
+
+vif(voter.logit.step)
+
+```
+**We can see that the Variable Inflation Factor for all the variables is well under acceptable values, thus we can say that our model passes the multicollinearity test.**  
+
+## Durbin Watson test to check serial correlation:
+```{r}
+
+dwtest(voter.logit.step)
+
+```
+**With DW value of 2.0025 we can easily say that there is almost no serial correlation and our model seems fine with regard to serial correlation!**  
+
+## Finally, let us predict the voter probabilities for voting in 2014 but we will also have to add vh14p and g12_precint_turnout:
+```{r}
+
+#Adding the two variables to our reduced variables till now!
+
+voter %>%
+   select(age, party, ethnicity, income, cd, dma,vh14p, vh12g, vh12p, vh10p, vh10g, vh08g, vh08p, vh06g, vh06p, vh04g, vh04p, vh02p, vh00g, net_worth, petowner_dog, intrst_musical_instruments_in_hh, g08_precinct_turnout, p12_precinct_turnout, vh14p, g12_precinct_turnout ) ->
+   voter.final
+   
+str(voter.final)
+
+#Replacing all nan for the following variables to No as it seems the most logical way to me.
+voter.final %>%
+   mutate(petowner_dog = str_replace_all(petowner_dog, "nan", "No")) %>%
+   mutate(petowner_dog = as.factor(petowner_dog)) %>%
+   mutate(intrst_musical_instruments_in_hh = str_replace_all(intrst_musical_instruments_in_hh, "nan", "No")) %>%
+   mutate(intrst_musical_instruments_in_hh = as.factor(intrst_musical_instruments_in_hh)) ->
+   voter.clean.var.final
+
+#Final Logistic prediction model starts here:
+
+voter.logit.final <- glm(vh12g ~ ., data=voter.clean.var.final, family=binomial(link="logit"))
+summary(voter.logit.final)
+
+voter.clean.var.final %>%
+   select(-vh12g) ->
+   test.final
+
+voter.logit.test=predict(voter.logit.final, test.final, type="response")
+
+voter.logit.test[1:10]
+
+voter.pred.test = ifelse(voter.logit.test>0.4, 1,0)
+length(voter.pred.test)
+sum(voter.pred.test, na.rm = TRUE)
+
+
+```
+**This is the final prediction for 2014 assuming that we do not have 2012 general voting in our test data set and supposing this gives the result for 2014 general election.**  
+
+## Final output csv file:  
+```{r}
+
+voter %>%
+   select(optimus_id, age, vh14p, vh12g) ->
+   voter.final.output
+
+str(voter.final.output)
+
+voter.final.output <- cbind(voter.final.output, "vote" = voter.pred.test, "prob" = voter.logit.test)
+head(voter.final.output)
+```
+

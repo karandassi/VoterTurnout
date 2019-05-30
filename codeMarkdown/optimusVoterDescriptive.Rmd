@@ -1,0 +1,47 @@
+---
+title: "Optimus_Project"
+author: "Karan Dassi"
+date: "4/19/2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Loading Libraries and Dataset:  
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(ggplot2))
+
+
+voter <- read.csv("..\\Data\\voterfile.csv")
+str(voter)
+voter.result <- read.csv("optimus_output.csv")
+str(voter.result)
+```
+##Joining the two Data Frames:  
+```{r}
+voter.combine <- cbind(voter, "vh14g" = voter.result$vote, "vh14prob" = voter.result$prob)
+
+```
+
+##Visualize my resultd compared to previous years general voting:
+```{r}
+
+voter.combine %>%
+   summarise("Votes_2000" = sum(vh00g, na.rm = T),"Votes_2002" = sum(vh14g, na.rm = T), "Votes_2004" = sum(vh04g, na.rm = T),"Votes_2006" = sum(vh06g, na.rm = T), "Votes_2008" = sum(vh08g, na.rm = T),"Votes_2010" = sum(vh10g, na.rm = T),"Votes_2012" = sum(vh12g, na.rm = T), "Votes_2014" = sum(vh14g, na.rm = T)) %>%
+   gather(Votes_2000:Votes_2014, key = Year, value = Sum)->
+   votes.sum
+
+votes.sum %>%
+ggplot(mapping = aes(x = Year, y = Sum, fill = Year)) +
+   geom_col() +
+   theme_bw() +
+   ylab("Sum of total votes")
+
+```
+
