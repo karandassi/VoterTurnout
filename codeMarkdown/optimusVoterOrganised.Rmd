@@ -24,10 +24,12 @@ suppressPackageStartupMessages(library(GGally))
 suppressPackageStartupMessages(library(lmtest))
 suppressPackageStartupMessages(library(car))
 suppressPackageStartupMessages(library(perturb))
+suppressPackageStartupMessages(library(missMDA))
 
 voter <- read.csv("..\\Data\\voterfile.csv")
 str(voter)
 head(voter)
+names(voter)
 ```
 
 ## Data Transformation into useable format!  
@@ -53,10 +55,10 @@ voter %>%
    mutate(vh00g = as.factor(vh00g))  ->
   voter
 
-#Removing vh14p, optimus ID and g12_precint_turnout because of logic as to test our model we are using only data till 2012.
+#Removing vh14p, and optimus ID because of logic as to test our model we are using only data till 2012.
 
 voter %>%
-   select(-vh14p, -optimus_id, -g12_precinct_turnout) ->
+   select(-vh14p, -optimus_id) ->
    voter.rm
 str(voter.rm)
 
@@ -78,7 +80,7 @@ voter_logit <- glm(vh12g ~ ., data=voter.rm, family=binomial(link="logit"), na.a
 summary(voter_logit)
 
 ```
-**The AIC here is 25414 and there are also a lot non significant values**  
+**The AIC here is 25414 and there are also a lot non significant predictors**  
 
 ## Predictions and Confusion matrix Cross Validation for original dataset:  
 ```{r}
@@ -466,7 +468,7 @@ print(logit.fit.stats.compare.red1, digits=3)
 ```
 **We can see that all the models perform well and are balanced and we can easily go ahead with our reduced model.**
 
-## Let's go ahead and now try to apply variable selection method and I am choosing Stepwise:  
+## Let's go ahead and now try to apply variable selection method and I am choosing Stepwise reduction:  
 ```{r}
 
 
@@ -490,7 +492,7 @@ summary(voter.step.backward)
 ```{r}
 
 voter.clean.var %>%
-   select(-vh02g, -vh00p, -intrst_nascar_in_hh, -donates_to_conservative_causes, -donates_to_liberal_causes, -home_owner_or_renter, -g10_precinct_turnout, -p08_precinct_turnout, -p10_precinct_turnout) ->
+   select(-vh02g, -vh00p, -intrst_nascar_in_hh, -donates_to_conservative_causes, -donates_to_liberal_causes, -home_owner_or_renter, -g10_precinct_turnout, -p08_precinct_turnout, -p10_precinct_turnout, -net_worth) ->
    voter.clean.var.step
 
 str(voter.clean.var.step)
@@ -505,7 +507,7 @@ voter.logit.step <- glm(vh12g ~ ., data=voter.clean.var.step, family=binomial(li
 summary(voter.logit.step)
 
 ```
-**The AIC has decreased to 25393.**  
+**The AIC has decreased to 25396.**  
 
 ## Let us go ahead and make predictions and cross validate for our reduced model from Stepwise:  
 ```{r}
@@ -632,13 +634,13 @@ dwtest(voter.logit.step)
 ```
 **With DW value of 2.0025 we can easily say that there is almost no serial correlation and our model seems fine with regard to serial correlation!**  
 
-## Finally, let us predict the voter probabilities for voting in 2014 but we will also have to add vh14p and g12_precint_turnout:
+## Finally, let us predict the voter probabilities for voting in 2014 but we will also have to add vh14p:
 ```{r}
 
-#Adding the two variables to our reduced variables till now!
+#Adding the one variable to our reduced variables till now!
 
 voter %>%
-   select(age, party, ethnicity, income, cd, dma,vh14p, vh12g, vh12p, vh10p, vh10g, vh08g, vh08p, vh06g, vh06p, vh04g, vh04p, vh02p, vh00g, net_worth, petowner_dog, intrst_musical_instruments_in_hh, g08_precinct_turnout, p12_precinct_turnout, vh14p, g12_precinct_turnout ) ->
+   select(age, party, ethnicity, income, cd, dma,vh14p, vh12g, vh12p, vh10p, vh10g, vh08g, vh08p, vh06g, vh06p, vh04g, vh04p, vh02p, vh00g, petowner_dog, intrst_musical_instruments_in_hh, g08_precinct_turnout, p12_precinct_turnout, vh14p, g12_precinct_turnout ) ->
    voter.final
    
 str(voter.final)
@@ -683,5 +685,8 @@ str(voter.final.output)
 
 voter.final.output <- cbind(voter.final.output, "vote" = voter.pred.test, "prob" = voter.logit.test)
 head(voter.final.output)
+
+write.csv(voter.final.output, file = "FinalOutput.csv")
+
 ```
 
